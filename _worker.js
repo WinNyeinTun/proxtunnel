@@ -13,6 +13,7 @@ var githubProxyURL = "https://raw.githubusercontent.com/proxzero/galaxy-subdomai
 var dohURL = "https://cloudflare-dns.com/dns-query";
 
 function isValidUUID(uuid) {
+    if (!uuid) return false;
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
     return uuidRegex.test(uuid);
 }
@@ -60,6 +61,91 @@ async function getHybridProxyIP(defaultProxy, rawUrl) {
     return activeProxyPool[Math.floor(Math.random() * activeProxyPool.length)] || defaultProxy;
 }
 
+// ============================================
+// Ads & Tracker Block List
+// ============================================
+const AD_DOMAIN_SUFFIXES = [
+    "doubleclick.net",
+    "googleadservices.com",
+    "googlesyndication.com",
+    "adservice.google.com",
+    "pagead2.googlesyndication.com",
+    "adcolony.com",
+    "appsflyer.com",
+    "unityads.unity3d.com",
+    "vungle.com",
+    "applovin.com",
+    "flurry.com",
+    "adjust.com",
+    "branch.io",
+    "admob.com",
+    "mopub.com",
+    "criteo.com",
+    "taboola.com",
+    "outbrain.com",
+    "scorecardresearch.com",
+    "quantserve.com",
+    "popads.net",
+    "inmobi.com",
+    "adroll.com",
+    "amazon-adsystem.com",
+    "adsafeprotected.com",
+    "moatads.com",
+    "openx.net",
+    "rubiconproject.com",
+    "pubmatic.com"
+];
+
+function isAdDomain(domain) {
+    if (!domain) return false;
+    const lower = domain.toLowerCase().trim();
+    if (AD_DOMAIN_SUFFIXES.some(suffix => lower === suffix || lower.endsWith("." + suffix))) {
+        return true;
+    }
+    if (/^(ad|ads|adservice|adserver|telemetry|track|tracker|analytics)\./i.test(lower)) {
+        return true;
+    }
+    return false;
+}
+
+// ============================================
+// Direct Local Bypass & Intranet Logic
+// ============================================
+const DIRECT_BYPASS_DOMAINS = [
+    "localhost",
+    "local",
+    "internal",
+    "lan",
+    "home.arpa"
+];
+
+function isPrivateOrLocalAddress(address) {
+    if (!address) return false;
+    const lower = address.toLowerCase().trim();
+    
+    if (DIRECT_BYPASS_DOMAINS.some(d => lower === d || lower.endsWith("." + d))) {
+        return true;
+    }
+
+    // IPv4 Loopback & Private Ranges
+    if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(lower)) return true;
+    if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(lower)) return true;
+    if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(lower)) return true;
+    const match172 = lower.match(/^172\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/);
+    if (match172) {
+        const secondOctet = parseInt(match172[1], 10);
+        if (secondOctet >= 16 && secondOctet <= 31) return true;
+    }
+    if (/^169\.254\.\d{1,3}\.\d{1,3}$/.test(lower)) return true;
+
+    // IPv6 checks
+    if (lower === "::1" || lower.startsWith("fc00:") || lower.startsWith("fe80:") || lower.startsWith("fd")) {
+        return true;
+    }
+
+    return false;
+}
+
 var worker_default = {
     async fetch(request, env, ctx) {
         // Load from environment variables
@@ -90,10 +176,16 @@ h1{color:#f87171;} code{background:#334155;padding:2px 8px;border-radius:4px;}</
         }
 
         const upgradeHeader = request.headers.get("Upgrade");
+        const contentType = request.headers.get("Content-Type") || request.headers.get("content-type") || "";
 
         // WebSocket proxy request အတွက်
         if (upgradeHeader === "websocket") {
             return await proxyOverWSHandler(request);
+        }
+
+        // gRPC HTTP/2 Stream proxy request အတွက်
+        if (contentType.includes("application/grpc")) {
+            return await proxyOverGRPCHandler(request);
         }
 
         // Web Browser မှ လာသမျှ Request တိုင်းကို Galaxy HTML Page သို့ ပို့မည်
@@ -104,6 +196,158 @@ h1{color:#f87171;} code{background:#334155;padding:2px 8px;border-radius:4px;}</
     }
 };
 
+// ============================================
+// gRPC HTTP/2 Stream Proxy Handler
+// ============================================
+function makeGrpcFrame(data) {
+    const rawBytes = data instanceof Uint8Array 
+        ? data 
+        : (data instanceof ArrayBuffer ? new Uint8Array(data) : new Uint8Array(data));
+    const len = rawBytes.byteLength;
+    const frame = new Uint8Array(5 + len);
+    frame[0] = 0; // Uncompressed flag
+    frame[1] = (len >> 24) & 255;
+    frame[2] = (len >> 16) & 255;
+    frame[3] = (len >> 8) & 255;
+    frame[4] = len & 255;
+    frame.set(rawBytes, 5);
+    return frame;
+}
+
+async function proxyOverGRPCHandler(request) {
+    const { readable, writable } = new TransformStream();
+    const writer = writable.getWriter();
+
+    let address = "";
+    let portWithRandomLog = "";
+
+    const log = (info, event) => {
+        console.log(`[gRPC][${address}:${portWithRandomLog}] ${info}`, event || "");
+    };
+
+    let remoteSocketWrapper = { value: null };
+    let udpStreamWrite = null;
+    let isDns = false;
+    let accumulatedBuffer = new Uint8Array(0);
+
+    const grpcClient = {
+        isGrpc: true,
+        send: async (data) => {
+            try {
+                const framed = makeGrpcFrame(data);
+                await writer.write(framed);
+            } catch (err) {
+                log("gRPC send error", err);
+            }
+        },
+        close: async () => {
+            try {
+                await writer.close();
+            } catch (err) {}
+        }
+    };
+
+    (async () => {
+        const reader = request.body.getReader();
+        try {
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) {
+                    log("gRPC body stream finished");
+                    break;
+                }
+                if (!value || value.byteLength === 0) continue;
+
+                if (isDns && udpStreamWrite) {
+                    await udpStreamWrite(value);
+                    continue;
+                }
+
+                if (remoteSocketWrapper.value) {
+                    const tcpWriter = remoteSocketWrapper.value.writable.getWriter();
+                    await tcpWriter.write(value);
+                    tcpWriter.releaseLock();
+                    continue;
+                }
+
+                // Append new bytes
+                const combined = new Uint8Array(accumulatedBuffer.length + value.length);
+                combined.set(accumulatedBuffer, 0);
+                combined.set(value, accumulatedBuffer.length);
+                accumulatedBuffer = combined;
+
+                // De-frame gRPC message or handle raw buffer
+                let payload = null;
+                if (accumulatedBuffer.length >= 5 && accumulatedBuffer[0] === 0) {
+                    const msgLen = (accumulatedBuffer[1] << 24) | (accumulatedBuffer[2] << 16) | (accumulatedBuffer[3] << 8) | accumulatedBuffer[4];
+                    if (accumulatedBuffer.length >= 5 + msgLen) {
+                        payload = accumulatedBuffer.slice(5, 5 + msgLen);
+                        accumulatedBuffer = accumulatedBuffer.slice(5 + msgLen);
+                    }
+                } else if (accumulatedBuffer.length >= 24) {
+                    payload = accumulatedBuffer;
+                    accumulatedBuffer = new Uint8Array(0);
+                }
+
+                if (!payload || payload.length < 24) {
+                    continue;
+                }
+
+                const result = processVlessHeader(payload.buffer ? payload.buffer.slice(payload.byteOffset, payload.byteOffset + payload.byteLength) : payload, userID);
+                if (result.hasError) {
+                    throw new Error(result.message);
+                }
+
+                const {
+                    addressRemote = "",
+                    portRemote = 443,
+                    rawDataIndex,
+                    responseHeader,
+                    isUDP
+                } = result;
+
+                address = addressRemote;
+                portWithRandomLog = `${portRemote} ${isUDP ? "udp" : "tcp"}`;
+
+                if (isUDP && portRemote !== 53) {
+                    throw new Error("UDP proxy only enabled for DNS (port 53)");
+                }
+                if (isUDP && portRemote === 53) {
+                    isDns = true;
+                }
+
+                const rawClientData = payload.slice(rawDataIndex);
+
+                if (isDns) {
+                    const { write } = await handleUDPOutBound(grpcClient, responseHeader, log);
+                    udpStreamWrite = write;
+                    if (rawClientData.length > 0) {
+                        await udpStreamWrite(rawClientData);
+                    }
+                    continue;
+                }
+
+                handleTCPOutBound(remoteSocketWrapper, addressRemote, portRemote, rawClientData, grpcClient, responseHeader, log);
+            }
+        } catch (err) {
+            log("gRPC processing error", err);
+        } finally {
+            safeCloseClient(grpcClient);
+        }
+    })();
+
+    return new Response(readable, {
+        status: 200,
+        headers: {
+            "Content-Type": "application/grpc",
+            "Trailer": "grpc-status, grpc-message"
+        }
+    });
+}
+
+// ============================================
+// WebSocket Proxy Handler
+// ============================================
 async function proxyOverWSHandler(request) {
     const webSocketPair = new WebSocketPair();
     const [client, webSocket] = Object.values(webSocketPair);
@@ -113,7 +357,7 @@ async function proxyOverWSHandler(request) {
     let portWithRandomLog = "";
 
     const log = (info, event) => {
-        console.log(`[${address}:${portWithRandomLog}] ${info}`, event || "");
+        console.log(`[WS][${address}:${portWithRandomLog}] ${info}`, event || "");
     };
 
     const earlyDataHeader = request.headers.get("sec-websocket-protocol") || "";
@@ -184,7 +428,23 @@ async function proxyOverWSHandler(request) {
     return new Response(null, { status: 101, webSocket: client });
 }
 
-async function handleTCPOutBound(remoteSocket, addressRemote, portRemote, rawClientData, webSocket, responseHeader, log) {
+// ============================================
+// TCP Outbound with AdBlock & Direct Bypass
+// ============================================
+async function handleTCPOutBound(remoteSocket, addressRemote, portRemote, rawClientData, client, responseHeader, log) {
+    // 1. Ads Block Check
+    if (isAdDomain(addressRemote)) {
+        log(`[AdBlock] Blocked outbound connection to ad domain: ${addressRemote}`);
+        safeCloseClient(client);
+        return;
+    }
+
+    // 2. Direct Local Bypass Check
+    const isDirect = isPrivateOrLocalAddress(addressRemote);
+    if (isDirect) {
+        log(`[DirectBypass] Local/private route detected for ${addressRemote}:${portRemote}. Connecting directly without proxy fallback.`);
+    }
+
     async function connectAndWrite(address, port) {
         const tcpSocket2 = connect({ hostname: address, port });
         remoteSocket.value = tcpSocket2;
@@ -196,22 +456,42 @@ async function handleTCPOutBound(remoteSocket, addressRemote, portRemote, rawCli
     }
 
     async function retry() {
+        if (isDirect) {
+            log(`[DirectBypass] Target connection failed, direct route will not fallback to external proxy.`);
+            safeCloseClient(client);
+            return;
+        }
+
         // Hybrid Proxy IP (Local Fast Safe List + GitHub Cache)
         const activeProxy = await getHybridProxyIP(proxyIP, githubProxyURL);
         const target = activeProxy || addressRemote;
         log(`Retrying connection via Hybrid ProxyIP: ${target}`);
         
-        const tcpSocket2 = await connectAndWrite(target, portRemote);
-        tcpSocket2.closed.catch((error) => {
-            console.log("Retry tcpSocket closed error", error);
-        }).finally(() => {
-            safeCloseWebSocket(webSocket);
-        });
-        remoteSocketToWS(tcpSocket2, webSocket, responseHeader, null, log);
+        try {
+            const tcpSocket2 = await connectAndWrite(target, portRemote);
+            tcpSocket2.closed.catch((error) => {
+                console.log("Retry tcpSocket closed error", error);
+            }).finally(() => {
+                safeCloseClient(client);
+            });
+            remoteSocketToClient(tcpSocket2, client, responseHeader, null, log);
+        } catch (err) {
+            log("Retry connect error", err);
+            safeCloseClient(client);
+        }
     }
 
-    const tcpSocket = await connectAndWrite(addressRemote, portRemote);
-    remoteSocketToWS(tcpSocket, webSocket, responseHeader, retry, log);
+    try {
+        const tcpSocket = await connectAndWrite(addressRemote, portRemote);
+        remoteSocketToClient(tcpSocket, client, responseHeader, isDirect ? null : retry, log);
+    } catch (err) {
+        log("Initial TCP connect error", err);
+        if (!isDirect) {
+            await retry();
+        } else {
+            safeCloseClient(client);
+        }
+    }
 }
 
 function makeReadableWebSocketStream(webSocketServer, earlyDataHeader, log) {
@@ -323,21 +603,33 @@ function processVlessHeader(vlessBuffer, userID2) {
     };
 }
 
-async function remoteSocketToWS(remoteSocket, webSocket, responseHeader, retry, log) {
+async function remoteSocketToClient(remoteSocket, client, responseHeader, retry, log) {
     let header = responseHeader;
     let hasIncomingData = false;
 
     await remoteSocket.readable.pipeTo(new WritableStream({
         async write(chunk, controller) {
             hasIncomingData = true;
-            if (webSocket.readyState !== 1) {
-                controller.error("WebSocket not open");
-            }
-            if (header) {
-                webSocket.send(await new Blob([header, chunk]).arrayBuffer());
-                header = null;
+            if (client.isGrpc) {
+                if (header) {
+                    const combined = new Uint8Array(header.length + chunk.byteLength);
+                    combined.set(header, 0);
+                    combined.set(new Uint8Array(chunk.buffer || chunk, chunk.byteOffset || 0, chunk.byteLength), header.length);
+                    await client.send(combined);
+                    header = null;
+                } else {
+                    await client.send(chunk);
+                }
             } else {
-                webSocket.send(chunk);
+                if (client.readyState !== 1) {
+                    controller.error("WebSocket not open");
+                }
+                if (header) {
+                    client.send(await new Blob([header, chunk]).arrayBuffer());
+                    header = null;
+                } else {
+                    client.send(chunk);
+                }
             }
         },
         close() {
@@ -347,8 +639,8 @@ async function remoteSocketToWS(remoteSocket, webSocket, responseHeader, retry, 
             console.error("Remote readable abort", reason);
         }
     })).catch((error) => {
-        console.error("remoteSocketToWS error", error.stack || error);
-        safeCloseWebSocket(webSocket);
+        console.error("remoteSocketToClient error", error.stack || error);
+        safeCloseClient(client);
     });
 
     if (hasIncomingData === false && retry) {
@@ -398,7 +690,20 @@ function safeCloseWebSocket(socket) {
     }
 }
 
-async function handleUDPOutBound(webSocket, responseHeader, log) {
+function safeCloseClient(client) {
+    if (!client) return;
+    try {
+        if (client.isGrpc && client.close) {
+            client.close();
+        } else if (client.readyState === 1 || client.readyState === 2) {
+            client.close();
+        }
+    } catch (error) {
+        console.error("safeCloseClient error", error);
+    }
+}
+
+async function handleUDPOutBound(client, responseHeader, log) {
     let isHeaderSent = false;
     const transformStream = new TransformStream({
         transform(chunk, controller) {
@@ -425,14 +730,16 @@ async function handleUDPOutBound(webSocket, responseHeader, log) {
             const udpSize = dnsQueryResult.byteLength;
             const udpSizeBuffer = new Uint8Array([udpSize >> 8 & 255, udpSize & 255]);
 
-            if (webSocket.readyState === 1) {
-                log(`DoH success, DNS message length: ${udpSize}`);
-                if (isHeaderSent) {
-                    webSocket.send(await new Blob([udpSizeBuffer, dnsQueryResult]).arrayBuffer());
-                } else {
-                    webSocket.send(await new Blob([responseHeader, udpSizeBuffer, dnsQueryResult]).arrayBuffer());
-                    isHeaderSent = true;
-                }
+            log(`DoH success, DNS message length: ${udpSize}`);
+            const fullPacket = isHeaderSent
+                ? new Uint8Array([...udpSizeBuffer, ...new Uint8Array(dnsQueryResult)])
+                : new Uint8Array([...responseHeader, ...udpSizeBuffer, ...new Uint8Array(dnsQueryResult)]);
+            isHeaderSent = true;
+
+            if (client.isGrpc) {
+                await client.send(fullPacket);
+            } else if (client.readyState === 1) {
+                client.send(fullPacket.buffer);
             }
         }
     })).catch((error) => {
