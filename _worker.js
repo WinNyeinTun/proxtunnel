@@ -4,10 +4,10 @@ import { connect } from "cloudflare:sockets";
 // ENV VARIABLES (Set in Cloudflare Dashboard)
 // ============================================
 var userID = "";                    // REQUIRED: Set UUID env variable
-var proxyIP = "hetzner.com";      // Fallback ProxyIP
+var proxyIP = "galaxproxy.cloud-ip.cc";      // Fallback ProxyIP
 
 // 🔗 သင့် GitHub ပေါ်က PROXYIP.txt ရဲ့ Raw Link ကို ဒီနေရာမှာ ထည့်ပါ
-var githubProxyURL = "https://galaxytunnel.github.io/PROXYIP.txt";
+var githubProxyURL = "";
 
 // DoH Provider URL
 var dohURL = "https://1.1.1.1-dns.com/dns-query";
@@ -22,12 +22,12 @@ function isValidUUID(uuid) {
 // Hybrid Proxy IP Pool (Local Fast Safe List)
 // ============================================
 const DEFAULT_LOCAL_PROXIES = [
-    "213.133.116.44",
-    "62.149.188.200",
-    "192.248.189.215",
-    "bunny.net",
-    "www.alibabacloud.com",
-    "www.visa.com.sg"
+    "lelouch.abrdns.com",
+    "blacknight.abrdns.com",
+    "net.galaxytunnel.linkpc.net",
+    "pro.galaxytunnel.linkpc.net",
+    "privacy.bbroot.com",
+    "galax.cc.cd"
 ];
 
 // In-memory active proxy cache pool (Hybrid)
