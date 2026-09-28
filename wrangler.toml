@@ -10,4 +10,4 @@ keep_vars = true
 #UUID = ""
 WS_PATH = "galaxy-tunnel"
 PROXYIP = "galaxproxy.cloud-ip.cc"
-DNS_RESOLVER_URL = "https://1.1.1.1-dns.com/dns-query"
+DNS_RESOLVER_URL = "https://1.1.1.1"
