@@ -4,13 +4,13 @@ import { connect } from "cloudflare:sockets";
 // ENV VARIABLES (Set in Cloudflare Dashboard)
 // ============================================
 var userID = "";                    // REQUIRED: Set UUID env variable
-var proxyIP = "www.alibabacloud.com";      // Fallback ProxyIP
+var proxyIP = "hetzner.com";      // Fallback ProxyIP
 
 // 🔗 သင့် GitHub ပေါ်က PROXYIP.txt ရဲ့ Raw Link ကို ဒီနေရာမှာ ထည့်ပါ
-var githubProxyURL = "";
+var githubProxyURL = "https://galaxytunnel.github.io/PROXYIP.txt";
 
 // DoH Provider URL
-var dohURL = "https://dns.alidns.com/dns-query";
+var dohURL = "https://1.1.1.1-dns.com/dns-query";
 
 function isValidUUID(uuid) {
     if (!uuid) return false;
@@ -22,11 +22,11 @@ function isValidUUID(uuid) {
 // Hybrid Proxy IP Pool (Local Fast Safe List)
 // ============================================
 const DEFAULT_LOCAL_PROXIES = [
-    "185.159.159.140",
-    "www.expressvpn.com",
+    "213.133.116.44",
+    "62.149.188.200",
     "192.248.189.215",
-    "1.1.1.1",
-    "1.0.0.1",
+    "bunny.net",
+    "www.alibabacloud.com",
     "www.visa.com.sg"
 ];
 
