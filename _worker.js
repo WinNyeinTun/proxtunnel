@@ -22,11 +22,11 @@ function isValidUUID(uuid) {
 // Hybrid Proxy IP Pool (Local Fast Safe List)
 // ============================================
 const DEFAULT_LOCAL_PROXIES = [
-    "cdn-b100.xn--b6gac.eu.org",
-    "cdn.xn--b6gac.eu.org",
-    "bpb.yousef.isegaro.com",
-    "icook.hk",
-    "icook.tw",
+    "185.159.159.140",
+    "www.expressvpn.com",
+    "192.248.189.215",
+    "1.1.1.1",
+    "1.0.0.1",
     "www.visa.com.sg"
 ];
 
