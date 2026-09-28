@@ -4,13 +4,13 @@ import { connect } from "cloudflare:sockets";
 // ENV VARIABLES (Set in Cloudflare Dashboard)
 // ============================================
 var userID = "";                    // REQUIRED: Set UUID env variable
-var proxyIP = "galaxproxy.cloud-ip.cc";      // Fallback ProxyIP
+var proxyIP = "www.alibabacloud.com";      // Fallback ProxyIP
 
 // 🔗 သင့် GitHub ပေါ်က PROXYIP.txt ရဲ့ Raw Link ကို ဒီနေရာမှာ ထည့်ပါ
 var githubProxyURL = "https://raw.githubusercontent.com/proxzero/galaxy-subdomain/refs/heads/main/PROXYIP.txt";
 
 // DoH Provider URL
-var dohURL = "https://cloudflare-dns.com/dns-query";
+var dohURL = "https://dns.alidns.com/dns-query";
 
 function isValidUUID(uuid) {
     if (!uuid) return false;
