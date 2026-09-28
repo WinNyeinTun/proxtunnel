@@ -7,7 +7,7 @@ var userID = "";                    // REQUIRED: Set UUID env variable
 var proxyIP = "www.alibabacloud.com";      // Fallback ProxyIP
 
 // 🔗 သင့် GitHub ပေါ်က PROXYIP.txt ရဲ့ Raw Link ကို ဒီနေရာမှာ ထည့်ပါ
-var githubProxyURL = "https://raw.githubusercontent.com/proxzero/galaxy-subdomain/refs/heads/main/PROXYIP.txt";
+var githubProxyURL = "";
 
 // DoH Provider URL
 var dohURL = "https://dns.alidns.com/dns-query";
