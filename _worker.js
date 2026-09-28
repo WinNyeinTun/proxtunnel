@@ -10,7 +10,7 @@ var proxyIP = "galaxproxy.cloud-ip.cc";      // Fallback ProxyIP
 var githubProxyURL = "";
 
 // DoH Provider URL
-var dohURL = "https://1.1.1.1-dns.com/dns-query";
+var dohURL = "https://1.1.1.1";
 
 function isValidUUID(uuid) {
     if (!uuid) return false;
